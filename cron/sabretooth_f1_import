@@ -1,0 +1,33 @@
+#!/bin/bash
+# This script expects the Opal username and loging to be stored in the "secret" file,
+# and delimited by a colon (eg: myuser:mypass)
+
+# read the Opal username and password
+secret=`cat secret`
+username="${secret%%:*}"
+password="${secret#*:}"
+
+# clean up and recreate the data files
+cd /tmp
+rm -f f1_interview_data_*.csv /var/lib/opal/fs/import/f1_interview_data_*.csv
+/usr/local/lib/cenozo-opal-import/bin/get_f1_interview_data
+
+# move the data files so that Opal can use it
+mkdir -p /var/lib/opal/fs/import
+chown opal:adm /var/lib/opal/fs/import
+mv f1_interview_data_*.csv /var/lib/opal/fs/import
+chown opal:adm /var/lib/opal/fs/import/f1_interview_data_*.csv
+rm -f f1_interview_data_*.csv
+
+# import data files
+for part in {1..3}; do
+  opal import-csv \
+    -o https://localhost:8843 \
+    -u $username \
+    -p $password \
+    --type Participant \
+    --path /import/f1_interview_data_$part.csv \
+    --tables "Tracking F1 Main Part $part" \
+    --incremental \
+    --destination sabretooth_f1
+done

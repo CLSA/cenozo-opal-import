@@ -1,0 +1,135 @@
+#!/usr/bin/php
+<?php
+/**
+ * This script downloads the status of all participants from Mastodon.
+ * The data is received in JSON format and written to a CSV output file
+ * with two columns: the CLSA unique ID (a string in the form "CNNNNNN"
+ * where C is a capitol letter and N is a digit between 0 and 9) and the
+ * status (a string which is either empty or has a short description of
+ * the participant's status).
+ * Each time the script is run the status of all participants is fetched
+ * even if that participant's data has never been exported to Opal.
+ * NOTE: this file expects secret.php to define USERNAME and PASSWORD
+ * 
+ * Author: Patrick Emond <emondpd@mcmaster.ca>
+ * Date: September 18th, 2013
+ * Last edit: May 30th, 2017
+ */
+
+include( 'secret.php' );
+define( 'URL', 'https://mastodon.clsa-elcv.ca/live/api/' );
+define( 'LIMIT', 20000 );
+define( 'MAX_ATTEMPTS', 10 ); // NOTE: LIMIT*MAX_ATTEMPTS MUST BE > EXPECTED NUMBER OF PARTICIPANTS
+define( 'OUTPUT_FILE', './participant_status.csv' );
+define( 'AUTH', sprintf( 'Authorization: Basic %s', base64_encode( sprintf( '%s:%s', USERNAME, PASSWORD ) ) ) );
+
+$exit_code = 0;
+
+// read the data from Mastodon's participant/status webservice
+$options = array(
+  'httpauth' => sprintf( '%s:%s', USERNAME, PASSWORD )
+);
+
+// open the output file for writing
+$file = fopen( OUTPUT_FILE, 'w' );
+if( !$file )
+{
+  printf( 'ERROR: Unable to open output file "%s" for writing'."\n", OUTPUT_FILE );
+  $exit_code = 1;
+}
+
+$attempts = 1;
+$first_row = true;
+$total = NULL;
+$count = 0;
+while( 0 == $exit_code && ( is_null( $total ) || $count < $total ) && MAX_ATTEMPTS >= $attempts )
+{
+  $curl = curl_init();
+
+  // set URL and other appropriate options
+  $modifier = urlencode( sprintf( '{"limit":%d,"offset":%d}', LIMIT, $count ) );
+  curl_setopt( $curl, CURLOPT_URL, URL.'participant?status=1&modifier='.$modifier );
+  curl_setopt( $curl, CURLOPT_SSL_VERIFYHOST, false );
+  curl_setopt( $curl, CURLOPT_RETURNTRANSFER, true );
+  curl_setopt( $curl, CURLOPT_HTTPHEADER, array( AUTH, 'No-Activity:true' ) );
+  curl_setopt( $curl, CURLOPT_HEADER, true );
+
+  $data = curl_exec( $curl );
+  $code = curl_getinfo( $curl, CURLINFO_HTTP_CODE );
+
+  if( 200 != $code )
+  {
+    printf( "ERROR: Unable to connect to Mastodon (code %s)\n", $code );
+    $exit_code = 2;
+    break;
+  }
+
+  $matches = array();
+  if( !preg_match( '/\nTotal: ([0-9]+)/', $data, $matches ) || 2 > count( $matches ) )
+  {
+    printf( "ERROR: Could not find Total property in response headers\n" );
+    $exit_code = 3;
+    break;
+  }
+
+  $total = $matches[1];
+  $json = json_decode( substr( $data, strrpos( $data, "\n" ) ) );
+
+  foreach( $json as $participant )
+  {
+    if( $first_row )
+    { // create the header row
+      $line = implode( ',', array_keys( (array) $participant ) );
+
+      // opal expects "uid" to be "id"
+      $line = substr( $line, 1 );
+      if( false === fwrite( $file, $line."\n" ) )
+      {
+        printf( 'ERROR: Problem while writing to output file "%s"'."\n", OUTPUT_FILE );
+        $exit_code = 4;
+        break;
+      }
+    }
+
+    $line = '';
+    $first_column = true;
+    foreach( $participant as $key => $value )
+    {
+      // last_consent will either be an empty string, 0 or 1
+      // need to convert to an empty string, true or false
+      if( 'last_consent' == $key && 0 < strlen( $value ) ) $value = $value ? 'true' : 'false';
+      
+      // written_consent will either be 0 or 1
+      // need to convert to true or false
+      if( 'written_consent' == $key ) $value = $value ? 'true' : 'false';
+
+      if( 0 == strlen( $value ) ) $line .= $first_column ? '' : ',';
+      else $line .= sprintf(
+          '%s"%s"',
+          $first_column ? '' : ',',
+          str_replace( '"', '""', $value ) );
+      $first_column = false;
+    }
+
+    if( false === fwrite( $file, $line."\n" ) )
+    {
+      printf( 'ERROR: Problem while writing to output file "%s"'."\n", OUTPUT_FILE );
+      $exit_code = 5;
+      break;
+    }
+
+    $first_row = false;
+  }
+
+  $count += count( $json );
+  $attempts++;
+}
+
+if( 0 == $exit_code )
+{
+  printf( "Done, %d records written to %s\n", $count, OUTPUT_FILE );
+}
+
+if( 1 != $exit_code ) fclose( $file );
+
+exit( $exit_code );

@@ -1,0 +1,163 @@
+#!/usr/bin/php
+<?php
+/**
+ * This script downloads the site and user information from Sabretooth F1.
+ * The data is received in JSON format and written to a CSV output file
+ * with four columns:
+ *    - the CLSA unique ID (a string in the form "CNNNNNN" where C is a capitol letter and N is a digit
+ *      between 0 and 9)
+ *    - the questionnaire
+ *    - the site the interview was done at
+ *    - the user the interview was done by
+ * Each time the script is run this data is fetched even if that interview's data has never been
+ * exported to Opal.
+ * NOTE: this file expects secret.php to define USERNAME and PASSWORD
+ * 
+ * Author: Patrick Emond <emondpd@mcmaster.ca>
+ * Date: May 30th, 2017
+ */
+
+include( 'secret.php' );
+define( 'URL', 'https://sabretooth_f1.clsa-elcv.ca/live/api/' );
+define( 'LIMIT', 10 );
+define( 'MAX_ATTEMPTS', 5 ); // NOTE: LIMIT*MAX_ATTEMPTS MUST BE > EXPECTED NUMBER OF PARTICIPANTS
+define( 'OUTPUT_FILE', './f1_interview_data' );
+define( 'AUTH', sprintf( 'Authorization: Basic %s', base64_encode( sprintf( '%s:%s', USERNAME, PASSWORD ) ) ) );
+
+$exit_code = 0;
+
+$options = array( 'httpauth' => sprintf( '%s:%s', USERNAME, PASSWORD ));
+
+foreach( array( 1, 2, 3 ) as $part )
+{
+  // open the output file for writing
+  $filename = sprintf( '%s_%d.csv', OUTPUT_FILE, $part );
+  $file = fopen( $filename, 'w' );
+  $qnaire = sprintf( 'Tracking F1 Main Part %d', $part );
+  if( !$file )
+  {
+    printf( 'ERROR: Unable to open output file "%s" for writing'."\n", $filename );
+    $exit_code = 1;
+  }
+
+  $attempts = 1;
+  $first_row = true;
+  $total = NULL;
+  $count = 0;
+  while( 0 == $exit_code && ( is_null( $total ) || $count < $total ) && MAX_ATTEMPTS >= $attempts )
+  {
+    $curl = curl_init();
+
+    // set URL and other appropriate options
+    $modifier = urlencode( sprintf(
+      '{"join":['.
+        '{"table":"participant","onleft":"interview.participant_id","onright":"participant.id"},'.
+        '{"table":"site","onleft":"interview.site_id","onright":"site.id"}'.
+      '],'.
+      '"where":['.
+        '{"column":"interview.end_datetime","operator":"!=","value":NULL},'.
+        '{"column":"qnaire.rank","operator":"=","value":%d}'.
+      '],'.
+      '"order":{"interview.start_datetime":true},'.
+      '"limit":%d,"offset":%d}',
+      $part + 1,
+      LIMIT,
+      $count
+    ) );
+    $select = urlencode(
+      '{"column":['.
+        '{"column":"uid","alias":"uid","table":"participant"},'.
+        '{"column":"name","alias":"site","table":"site"},'.
+        '{"column":"first_name","table":"user"},'.
+        '{"column":"last_name","table":"user"}'.
+      ']}'
+    );
+    curl_setopt( $curl, CURLOPT_URL, sprintf( '%sinterview?modifier=%s&select=%s', URL, $modifier, $select ) );
+    curl_setopt( $curl, CURLOPT_SSL_VERIFYHOST, false );
+    curl_setopt( $curl, CURLOPT_RETURNTRANSFER, true );
+    curl_setopt( $curl, CURLOPT_HTTPHEADER, array( AUTH, 'No-Activity:true' ) );
+    curl_setopt( $curl, CURLOPT_HEADER, true );
+
+    $data = curl_exec( $curl );
+    $code = curl_getinfo( $curl, CURLINFO_HTTP_CODE );
+
+    if( 200 != $code )
+    {
+      printf( "ERROR: Unable to connect to Mastodon (code %s)\n", $code );
+      $exit_code = 2;
+      break;
+    }
+
+    $matches = array();
+    if( !preg_match( '/\nTotal: ([0-9]+)/', $data, $matches ) || 2 > count( $matches ) )
+    {
+      printf( "ERROR: Could not find Total property in response headers\n" );
+      $exit_code = 3;
+      break;
+    }
+
+    $total = $matches[1];
+    $json = json_decode( substr( $data, strrpos( $data, "\n" ) ) );
+
+    foreach( $json as $interview )
+    {
+      if( $first_row )
+      { // create the header row
+        $line = implode( ',', array_keys( (array) $interview ) );
+
+        // opal expects "uid" to be "id"
+        $line = substr( $line, 1 );
+
+        // merge first and last name into a single field
+        $line = str_replace( 'first_name,last_name', 'user', $line );
+
+        // remove the "id" column (this is the interview id which we don't need)
+        $line = str_replace( ',id', '', $line );
+
+        if( false === fwrite( $file, $line."\n" ) )
+        {
+          printf( 'ERROR: Problem while writing to output file "%s"'."\n", $filename );
+          $exit_code = 4;
+          break;
+        }
+      }
+
+      $line = '';
+      $first_column = true;
+      $first_name = NULL;
+      foreach( $interview as $key => $value )
+      {
+        // merge first/last name into user
+        if( 'first_name' == $key ) $first_name = $value;
+        else if( 'id' == $key ) continue; // ignore the id column
+        else
+        {
+          if( 'last_name' == $key ) $value = sprintf( '%s %s', $first_name, $value );
+          $line .= 0 == strlen( $value )
+                 ? $first_column ? '' : ','
+                 : sprintf( '%s"%s"', $first_column ? '' : ',', str_replace( '"', '""', $value ) );
+        }
+
+        if( $first_column ) $first_column = false;
+      }
+
+      if( false === fwrite( $file, $line."\n" ) )
+      {
+        printf( 'ERROR: Problem while writing to output file "%s"'."\n", $filename );
+        $exit_code = 5;
+        break;
+      }
+
+      $first_row = false;
+    }
+
+    $count += count( $json );
+    $attempts++;
+  }
+
+  if( 1 != $exit_code ) fclose( $file );
+  if( 0 == $exit_code ) printf( "Done, %d records written to %s\n", $count, $filename );
+  else break;
+}
+
+exit( $exit_code );

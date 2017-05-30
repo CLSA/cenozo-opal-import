@@ -1,0 +1,37 @@
+#!/bin/bash
+# Import various survey data from limesurvey2 database
+# This script expects the Opal username and loging to be stored in the "secret" file,
+# and delimited by a colon (eg: myuser:mypass)
+
+# read the Opal username and password
+cd /usr/local/lib/cenozo-opal-import
+secret=`cat secret`
+username="${secret%%:*}"
+password="${secret#*:}"
+
+opal import-limesurvey \
+  -o https://localhost:8843 \
+  -u $username \
+  -p $password \
+  --database live_limesurvey2 \
+  --destination clsa-cati \
+  --tables "Tracking F1 Main Part 1" \
+  --incremental
+
+opal import-limesurvey \
+  -o https://localhost:8843 \
+  -u $username \
+  -p $password \
+  --database live_limesurvey2 \
+  --destination clsa-cati \
+  --tables "Tracking F1 Main Part 2" \
+  --incremental
+
+opal import-limesurvey \
+  -o https://localhost:8843 \
+  -u $username \
+  -p $password \
+  --database live_limesurvey2 \
+  --destination clsa-cati \
+  --tables "Tracking F1 Main Part 3" \
+  --incremental

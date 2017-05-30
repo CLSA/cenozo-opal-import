@@ -1,0 +1,32 @@
+#!/bin/bash
+# Import data from 
+# This script expects the Opal username and loging to be stored in the "secret" file,
+# and delimited by a colon (eg: myuser:mypass)
+
+# read the Opal username and password
+secret=`cat secret`
+username="${secret%%:*}"
+password="${secret#*:}"
+
+# clean up and recreate the data file
+cd /tmp
+rm -f participant_status.csv /var/lib/opal/fs/import/participant_status.csv
+/usr/local/lib/cenozo-opal-import/bin/get_participant_status
+
+# move the data file so that Opal can use it
+mkdir -p /var/lib/opal/fs/import
+chown opal:adm /var/lib/opal/fs/import
+mv participant_status.csv /var/lib/opal/fs/import
+chown opal:adm /var/lib/opal/fs/import/participant_status.csv
+rm -f participant_status.csv
+
+# import data file
+opal import-csv \
+  -o https://localhost:8843 \
+  -u $username \
+  -p $password \
+  --type Participant \
+  --path /import/participant_status.csv \
+  --tables ParticipantStatus \
+  --incremental \
+  --destination mastodon
