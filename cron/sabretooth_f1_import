@@ -3,7 +3,7 @@
 # and delimited by a colon (eg: myuser:mypass)
 
 # read the Opal username and password
-secret=`cat secret`
+secret=`cat /usr/local/lib/cenozo-opal-import/cron/secret`
 username="${secret%%:*}"
 password="${secret#*:}"
 

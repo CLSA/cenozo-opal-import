@@ -19,8 +19,8 @@
 
 include( 'secret.php' );
 define( 'URL', 'https://sabretooth_f1.clsa-elcv.ca/live/api/' );
-define( 'LIMIT', 10 );
-define( 'MAX_ATTEMPTS', 5 ); // NOTE: LIMIT*MAX_ATTEMPTS MUST BE > EXPECTED NUMBER OF PARTICIPANTS
+define( 'LIMIT', 10000 );
+define( 'MAX_ATTEMPTS', 10 ); // NOTE: LIMIT*MAX_ATTEMPTS MUST BE > EXPECTED NUMBER OF PARTICIPANTS
 define( 'OUTPUT_FILE', './f1_interview_data' );
 define( 'AUTH', sprintf( 'Authorization: Basic %s', base64_encode( sprintf( '%s:%s', USERNAME, PASSWORD ) ) ) );
 
